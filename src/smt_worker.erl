@@ -15,7 +15,8 @@
 
 -record(state, {
         host,
-        interval = 15000}).
+        interval,
+        mstate = dict:new()}).
 
 -include_lib("emysql/include/emysql.hrl").
 
@@ -43,10 +44,10 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(flush, #state{interval=Interval, host=Host}=State) ->
-    flush_graphite(Host),
+handle_info(flush, #state{interval=Interval, host=Host, mstate=MState}=State) ->
+    MState2 = flush_graphite(Host, MState),
     erlang:send_after(Interval, self(), flush),
-    {noreply, State#state{}};
+    {noreply, State#state{mstate=MState2}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -59,10 +60,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-flush_graphite(Host) ->
+flush_graphite(Host, MState) ->
     Timestamp = now_to_seconds(now()),
     Packet = emysql:execute(sdt_mysql_pool, sdt_show_status, []),
-    Metrics = result_packet_to_proplist(Packet),
+    RawMetrics = result_packet_to_proplist(Packet),
+    MState2 = update_interval(MState),
+    {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
     Prefix = "smt." ++ Host ++ ".",
     Output = [graphite_metric(Prefix, Name, Value, Timestamp)
               || {Name, Value} <- Metrics],
@@ -70,7 +73,7 @@ flush_graphite(Host) ->
     gen_tcp:send(Socket, Output),
     gen_tcp:close(Socket),
     error_logger:info_msg("Flushed ~B metrics.", [length(Metrics)]),
-    ok.
+    MState3.
 
 graphite_metric(Prefix, Name, Value, Timestamp) ->
     io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, Timestamp]).
@@ -97,6 +100,7 @@ merge([_|Names], Rows) ->
     merge(Names, Rows).
 
 variables() ->
+    %% Should be sorted.
     [<<"Bytes_received">>,
      <<"Bytes_sent">>,
      <<"Innodb_buffer_pool_pages_data">>,
@@ -132,11 +136,6 @@ variables() ->
      <<"Innodb_pages_created">>,
      <<"Innodb_pages_read">>,
      <<"Innodb_pages_written">>,
-     <<"Innodb_row_lock_current_waits">>,
-     <<"Innodb_row_lock_time">>,
-     <<"Innodb_row_lock_time_avg">>,
-     <<"Innodb_row_lock_time_max">>,
-     <<"Innodb_row_lock_waits">>,
      <<"Innodb_rows_deleted">>,
      <<"Innodb_rows_inserted">>,
      <<"Innodb_rows_read">>,
@@ -147,3 +146,86 @@ variables() ->
      <<"Select_scan">>,
      <<"Slow_queries">>].
 
+calculate_values([{Name, RawValue}|RawMetrics], Metrics, MState) ->
+    {Metrics2, MState2} = calculate_value(Name, RawValue, MState),
+    calculate_values(RawMetrics, Metrics ++ Metrics2, MState2);
+calculate_values([], Metrics, MState) ->
+    {Metrics, MState}.
+    
+calculate_value(Name, RawValue, MState) ->
+    case Name of
+        <<"Bytes_received">> ->
+            bytes_per_second(Name, RawValue, MState);
+        <<"Bytes_sent">> ->
+            bytes_per_second(Name, RawValue, MState);
+         <<"Innodb_buffer_pool_read", _/binary>> -> 
+            events_per_second(Name, RawValue, MState);
+         <<"Innodb_buffer_pool_write_requests">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_buffer_pool_pages_flushed">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_data_fsyncs">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_data_read">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_data_reads">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_data_writes">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_data_written">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_os_log_", _/binary>> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_pages_", _/binary>> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_rows_", _/binary>> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Queries">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Select_", _/binary>> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Slow_queries">> ->
+            events_per_second(Name, RawValue, MState);
+        _ ->
+            {[{Name, RawValue}], MState}
+    end.
+
+events_per_second(Name, RawValue, MState) ->
+    calc_difference(Name, RawValue, MState).
+
+bytes_per_second(Name, RawValue, MState) ->
+    calc_difference(Name, RawValue, MState).
+
+calc_difference(Name, RawValue, MState) ->
+    NewValue = bin_to_int(RawValue),
+    case dict:find(Name, MState) of
+        error ->
+            %% Save initial value
+            {[], dict:store(Name, NewValue, MState)};
+        {ok, OldValue} ->
+            {[{Name, print_float((NewValue - OldValue) / get_interval(MState))}],
+             dict:store(Name, NewValue, MState)}
+    end.
+
+print_int(Value) when is_integer(Value) ->
+    list_to_binary(integer_to_list(Value)).
+
+print_float(Value) when is_float(Value) ->
+    print_int(round(Value)).
+
+bin_to_int(Value) when is_binary(Value) ->
+    list_to_integer(binary_to_list(Value)).
+
+update_interval(MState) ->
+    NewQueryTime = now_to_seconds(now()),
+    case dict:find(query_time, MState) of
+        error ->
+            dict:store(query_time, NewQueryTime, MState);
+        {ok, OldQueryTime} ->
+            dict:store(query_time, NewQueryTime,
+                dict:store(interval, NewQueryTime - OldQueryTime, MState))
+    end.
+
+%% Interval in seconds
+get_interval(MState) ->
+    dict:fetch(interval, MState).
