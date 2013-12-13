@@ -1,0 +1,14 @@
+{application, smt,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  crypto,
+                  emysql
+                 ]},
+  {mod, { smt_app, []}},
+  {env, []}
+ ]}.
