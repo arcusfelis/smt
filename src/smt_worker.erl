@@ -246,6 +246,9 @@ calc_difference(Name, RawValue, MState) ->
         error ->
             %% Save initial value
             {[], dict:store(Name, NewValue, MState)};
+        {ok, OldValue} when OldValue > NewValue ->
+            %% Skip negative diff
+            {[], dict:store(Name, NewValue, MState)};
         {ok, OldValue} ->
             {[{Name, print_float((NewValue - OldValue) / get_interval(MState))}],
              dict:store(Name, NewValue, MState)}
