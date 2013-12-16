@@ -174,6 +174,10 @@ calculate_value(Name, RawValue, MState) ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_data_written">> ->
             events_per_second(Name, RawValue, MState);
+        <<"Innodb_dblwr_pages_written">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Innodb_dblwr_writes">> ->
+            events_per_second(Name, RawValue, MState);
         <<"Innodb_log_write_requests">> ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_log_writes">> ->
