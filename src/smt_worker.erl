@@ -92,9 +92,9 @@ innodb_result_packet_to_proplist(#error_packet{msg=Msg}) ->
     [];
 innodb_result_packet_to_proplist(#result_packet{rows=Rows}) ->
     Status = innodb_rows_to_status(Rows),
-    [{<<"Innodb_lsn">>, innodb_lsn(Status)},
+    [{<<"Innodb_log_current">>, innodb_lsn(Status)},
      {<<"Innodb_log_flushed">>, innodb_log_flushed(Status)},
-     {<<"Innodb_last_checkpoint">>, innodb_checkpoint(Status)}].
+     {<<"Innodb_log_checkpoint">>, innodb_checkpoint(Status)}].
 
 innodb_rows_to_status([[_Type, _Name, Status]]) ->
     Status.
@@ -231,11 +231,11 @@ calculate_value(Name, RawValue, MState) ->
         <<"Slow_queries">> ->
             events_per_second(Name, RawValue, MState);
 
-        <<"Innodb_lsn">> ->
+        <<"Innodb_log_current">> ->
             format_lsn(Name, RawValue, MState);
         <<"Innodb_log_flushed">> ->
             format_lsn(Name, RawValue, MState);
-        <<"Innodb_last_checkpoint">> ->
+        <<"Innodb_log_checkpoint">> ->
             format_lsn(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
