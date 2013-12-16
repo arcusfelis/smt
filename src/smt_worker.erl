@@ -100,25 +100,25 @@ innodb_rows_to_status([[_Type, _Name, Status]]) ->
     Status.
 
 innodb_lsn(Status) ->
-    {match, [_, LSN]} =
+    {match, [Group, Offset]} =
         re:run(Status,
             <<"Log sequence number\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
-    LSN.
+    {Group, Offset}.
 
 innodb_log_flushed(Status) ->
-    {match, [_, LSN]} =
+    {match, [Group, Offset]} =
         re:run(Status,
             <<"Log flushed up to\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
-    LSN.
+    {Group, Offset}.
 
 innodb_checkpoint(Status) ->
-    {match, [_, LSN]} =
+    {match, [Group, Offset]} =
         re:run(Status,
             <<"Last checkpoint at\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
-    LSN.
+    {match, [Group, Offset]}.
 
 %% Convert a list of rows into a proplist.
 %% Filter unknown rows.
@@ -230,6 +230,13 @@ calculate_value(Name, RawValue, MState) ->
             events_per_second(Name, RawValue, MState);
         <<"Slow_queries">> ->
             events_per_second(Name, RawValue, MState);
+
+        <<"Innodb_lsn">> ->
+            format_lsn(Name, RawValue, MState);
+        <<"Innodb_log_flushed">> ->
+            format_lsn(Name, RawValue, MState);
+        <<"Innodb_last_checkpoint">> ->
+            format_lsn(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
     end.
@@ -276,3 +283,6 @@ update_interval(MState) ->
 %% Interval in seconds
 get_interval(MState) ->
     dict:fetch(interval, MState).
+
+format_lsn(Name, {_Group, Offset}, MState) ->
+    {[{Name, Offset}], MState}.
