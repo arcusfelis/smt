@@ -102,21 +102,21 @@ innodb_rows_to_status([[_Type, _Name, Status]]) ->
 innodb_lsn(Status) ->
     {match, [Group, Offset]} =
         re:run(Status,
-            <<"Log sequence number\s+(\\d+) (\\d+)">>,
+            <<"Log sequence number\\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
     {Group, Offset}.
 
 innodb_log_flushed(Status) ->
     {match, [Group, Offset]} =
         re:run(Status,
-            <<"Log flushed up to\s+(\\d+) (\\d+)">>,
+            <<"Log flushed up to\\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
     {Group, Offset}.
 
 innodb_checkpoint(Status) ->
     {match, [Group, Offset]} =
         re:run(Status,
-            <<"Last checkpoint at\s+(\\d+) (\\d+)">>,
+            <<"Last checkpoint at\\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
     {match, [Group, Offset]}.
 
