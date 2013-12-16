@@ -34,7 +34,8 @@ start_link(Interval) ->
 init([Interval]) ->
     {ok, Host} = inet:gethostname(),
     erlang:send_after(Interval, self(), flush),
-    emysql:prepare(sdt_show_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
+    emysql:prepare(sdt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
+    emysql:prepare(sdt_show_innodb_status, <<"SHOW /*!50000 ENGINE*/ INNODB STATUS">>),
     {ok, #state{interval=Interval, host=Host}}.
 
 handle_call(_Request, _From, State) ->
@@ -62,8 +63,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 flush_graphite(Host, MState) ->
     Timestamp = now_to_seconds(now()),
-    Packet = emysql:execute(sdt_mysql_pool, sdt_show_status, []),
-    RawMetrics = result_packet_to_proplist(Packet),
+    GlobPacket = emysql:execute(sdt_mysql_pool, sdt_show_global_status, []),
+    InnoPacket = emysql:execute(sdt_mysql_pool, sdt_show_innodb_status, []),
+    RawMetrics = result_packet_to_proplist(GlobPacket)
+              ++ innodb_result_packet_to_proplist(InnoPacket),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
     Prefix = "smt." ++ Host ++ ".",
@@ -83,6 +86,39 @@ now_to_seconds({Mega,Seconds,_}) ->
 
 result_packet_to_proplist(#result_packet{rows=Rows}) ->
     merge(variables(), Rows).
+
+innodb_result_packet_to_proplist(#error_packet{msg=Msg}) ->
+    error_logger:error_msg("~p", [Msg]), 
+    [];
+innodb_result_packet_to_proplist(#result_packet{rows=Rows}) ->
+    Status = innodb_rows_to_status(Rows),
+    [{<<"Innodb_lsn">>, innodb_lsn(Status)},
+     {<<"Innodb_log_flushed">>, innodb_log_flushed(Status)},
+     {<<"Innodb_last_checkpoint">>, innodb_checkpoint(Status)}].
+
+innodb_rows_to_status([[_Type, _Name, Status]]) ->
+    Status.
+
+innodb_lsn(Status) ->
+    {match, [_, LSN]} =
+        re:run(Status,
+            <<"Log sequence number\s+(\\d+) (\\d+)">>,
+            [{capture, all_but_first, binary}]),
+    LSN.
+
+innodb_log_flushed(Status) ->
+    {match, [_, LSN]} =
+        re:run(Status,
+            <<"Log flushed up to\s+(\\d+) (\\d+)">>,
+            [{capture, all_but_first, binary}]),
+    LSN.
+
+innodb_checkpoint(Status) ->
+    {match, [_, LSN]} =
+        re:run(Status,
+            <<"Last checkpoint at\s+(\\d+) (\\d+)">>,
+            [{capture, all_but_first, binary}]),
+    LSN.
 
 %% Convert a list of rows into a proplist.
 %% Filter unknown rows.
