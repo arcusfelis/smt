@@ -118,7 +118,7 @@ innodb_checkpoint(Status) ->
         re:run(Status,
             <<"Last checkpoint at\\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
-    {match, [Group, Offset]}.
+    {Group, Offset}.
 
 %% Convert a list of rows into a proplist.
 %% Filter unknown rows.
@@ -214,6 +214,12 @@ calculate_value(Name, RawValue, MState) ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_dblwr_writes">> ->
             events_per_second(Name, RawValue, MState);
+        <<"Innodb_log_current">> ->
+            format_lsn(Name, RawValue, MState);
+        <<"Innodb_log_flushed">> ->
+            format_lsn(Name, RawValue, MState);
+        <<"Innodb_log_checkpoint">> ->
+            format_lsn(Name, RawValue, MState);
         <<"Innodb_log_write_requests">> ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_log_writes">> ->
@@ -230,13 +236,6 @@ calculate_value(Name, RawValue, MState) ->
             events_per_second(Name, RawValue, MState);
         <<"Slow_queries">> ->
             events_per_second(Name, RawValue, MState);
-
-        <<"Innodb_log_current">> ->
-            format_lsn(Name, RawValue, MState);
-        <<"Innodb_log_flushed">> ->
-            format_lsn(Name, RawValue, MState);
-        <<"Innodb_log_checkpoint">> ->
-            format_lsn(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
     end.
