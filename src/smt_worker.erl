@@ -34,8 +34,8 @@ start_link(Interval) ->
 init([Interval]) ->
     {ok, Host} = inet:gethostname(),
     erlang:send_after(Interval, self(), flush),
-    emysql:prepare(sdt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
-    emysql:prepare(sdt_show_innodb_status, <<"SHOW /*!50000 ENGINE*/ INNODB STATUS">>),
+    emysql:prepare(smt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
+    emysql:prepare(smt_show_innodb_status, <<"SHOW /*!50000 ENGINE*/ INNODB STATUS">>),
     {ok, #state{interval=Interval, host=Host}}.
 
 handle_call(_Request, _From, State) ->
@@ -63,8 +63,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 flush_graphite(Host, MState) ->
     Timestamp = now_to_seconds(now()),
-    GlobPacket = emysql:execute(sdt_mysql_pool, sdt_show_global_status, []),
-    InnoPacket = emysql:execute(sdt_mysql_pool, sdt_show_innodb_status, []),
+    GlobPacket = emysql:execute(smt_mysql_pool, smt_show_global_status, []),
+    InnoPacket = emysql:execute(smt_mysql_pool, smt_show_innodb_status, []),
     RawMetrics = result_packet_to_proplist(GlobPacket)
               ++ innodb_result_packet_to_proplist(InnoPacket),
     MState2 = update_interval(MState),
