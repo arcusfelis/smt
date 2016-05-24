@@ -9,9 +9,6 @@
 %% Supervisor callbacks
 -export([init/1]).
 
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Args, Type), ).
-
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -24,8 +21,11 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, { {one_for_one, 5, 10}, [ smt_worker() ]} }.
+    {ok, Hosts} = application:get_env(smt, mysql_hosts),
+    Specs = [ smt_worker(PoolName, Params) || {PoolName, Params} <- Hosts ],
+    {ok, { {one_for_one, 5, 10}, Specs} }.
 
-smt_worker() ->
-    {smt_worker, {smt_worker, start_link, [10000]},
+smt_worker(PoolName, Params) ->
+    {smt_worker, {smt_worker, start_link, [PoolName, Params, 10000]},
         permanent, 5000, worker, [smt_worker]}.
+

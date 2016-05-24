@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1]).
+-export([start_link/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -14,7 +14,7 @@
          code_change/3]).
 
 -record(state, {
-        host,
+        pool_name,
         interval,
         mstate = dict:new()}).
 
@@ -24,19 +24,19 @@
 %%% API
 %%%===================================================================
 
-start_link(Interval) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Interval], []).
+start_link(PoolName, Params, Interval) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [PoolName, Params, Interval], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Interval]) ->
-    {ok, Host} = inet:gethostname(),
+init([PoolName, Params, Interval]) ->
+    emysql:add_pool(PoolName, Params),
     erlang:send_after(Interval, self(), flush),
     emysql:prepare(smt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
     emysql:prepare(smt_show_innodb_status, <<"SHOW /*!50000 ENGINE*/ INNODB STATUS">>),
-    {ok, #state{interval=Interval, host=Host}}.
+    {ok, #state{interval=Interval, pool_name=PoolName}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -45,8 +45,8 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(flush, #state{interval=Interval, host=Host, mstate=MState}=State) ->
-    MState2 = flush_graphite(Host, MState),
+handle_info(flush, #state{interval=Interval, pool_name=PoolName, mstate=MState}=State) ->
+    MState2 = flush_graphite(PoolName, MState),
     erlang:send_after(Interval, self(), flush),
     {noreply, State#state{mstate=MState2}};
 handle_info(_Info, State) ->
@@ -61,18 +61,20 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-flush_graphite(Host, MState) ->
+flush_graphite(PoolName, MState) ->
     Timestamp = now_to_seconds(now()),
-    GlobPacket = emysql:execute(smt_mysql_pool, smt_show_global_status, []),
-    InnoPacket = emysql:execute(smt_mysql_pool, smt_show_innodb_status, []),
+    GlobPacket = emysql:execute(PoolName, smt_show_global_status, []),
+    InnoPacket = emysql:execute(PoolName, smt_show_innodb_status, []),
     RawMetrics = result_packet_to_proplist(GlobPacket)
               ++ innodb_result_packet_to_proplist(InnoPacket),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
-    Prefix = "smt." ++ Host ++ ".",
+    Prefix = "smt." ++ atom_to_list(PoolName) ++ ".",
     Output = [graphite_metric(Prefix, Name, Value, Timestamp)
               || {Name, Value} <- Metrics],
-    {ok, Socket} = gen_tcp:connect("10.100.0.70", 2003, []),
+    {ok, GraphiteHost} = application:get_env(smt, graphite_host),
+    {ok, GraphitePort} = application:get_env(smt, graphite_port),
+    {ok, Socket} = gen_tcp:connect(GraphiteHost, GraphitePort, []),
     gen_tcp:send(Socket, Output),
     gen_tcp:close(Socket),
     error_logger:info_msg("Flushed ~B metrics.", [length(Metrics)]),
@@ -99,26 +101,31 @@ innodb_result_packet_to_proplist(#result_packet{rows=Rows}) ->
 innodb_rows_to_status([[_Type, _Name, Status]]) ->
     Status.
 
-innodb_lsn(Status) ->
-    {match, [Group, Offset]} =
-        re:run(Status,
-            <<"Log sequence number\\s+(\\d+) (\\d+)">>,
+
+parse_offset(Status, Prefix) ->
+    Res = re:run(Status,
+            <<Prefix/binary, "\\s+(\\d+) (\\d+)">>,
             [{capture, all_but_first, binary}]),
-    {Group, Offset}.
+    case Res of
+        {match, [Group, Offset]} ->
+            {Group, Offset};
+        nomatch ->
+            {match, [Offset]} = re:run(Status,
+                    <<Prefix/binary, "\\s+(\\d+)">>,
+                    [{capture, all_but_first, binary}]),
+            {0, Offset}
+    end.
+
+
+
+innodb_lsn(Status) ->
+    parse_offset(Status, <<"Log sequence number">>).
 
 innodb_log_flushed(Status) ->
-    {match, [Group, Offset]} =
-        re:run(Status,
-            <<"Log flushed up to\\s+(\\d+) (\\d+)">>,
-            [{capture, all_but_first, binary}]),
-    {Group, Offset}.
+    parse_offset(Status, <<"Log flushed up to">>).
 
 innodb_checkpoint(Status) ->
-    {match, [Group, Offset]} =
-        re:run(Status,
-            <<"Last checkpoint at\\s+(\\d+) (\\d+)">>,
-            [{capture, all_but_first, binary}]),
-    {Group, Offset}.
+    parse_offset(Status, <<"Last checkpoint at">>).
 
 %% Convert a list of rows into a proplist.
 %% Filter unknown rows.

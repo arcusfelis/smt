@@ -10,5 +10,20 @@
                   emysql
                  ]},
   {mod, { smt_app, []}},
-  {env, []}
+  {env,
+   [
+    {graphite_host, "127.0.0.1"},
+    {graphite_port, 2003},
+    {mysql_hosts,
+     [
+        {mysql1,
+         [
+                {host, "127.0.0.1"},
+                {user, ""},
+                {password, ""},
+                {encoding, utf8}
+         ]
+        }
+     ]}
+   ]}
  ]}.
