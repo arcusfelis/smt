@@ -104,7 +104,9 @@ merge([_|Names], Rows) ->
 
 variables() ->
     %% Should be sorted.
-    [<<"Bytes_received">>,
+    [<<"Aborted_clients">>,
+     <<"Aborted_connects">>,
+     <<"Bytes_received">>,
      <<"Bytes_sent">>,
      <<"Innodb_buffer_pool_pages_data">>,
      <<"Innodb_buffer_pool_pages_dirty">>,
@@ -159,6 +161,10 @@ calculate_values([], Metrics, MState) ->
     
 calculate_value(Name, RawValue, MState) ->
     case Name of
+        <<"Aborted_clients">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Aborted_connects">> ->
+            events_per_second(Name, RawValue, MState);
         <<"Bytes_received">> ->
             bytes_per_second(Name, RawValue, MState);
         <<"Bytes_sent">> ->
