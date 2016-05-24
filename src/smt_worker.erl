@@ -119,6 +119,8 @@ variables() ->
      <<"Innodb_buffer_pool_reads">>,
      <<"Innodb_buffer_pool_wait_free">>,
      <<"Innodb_buffer_pool_write_requests">>,
+     <<"Innodb_checkpoint_age">>,
+     <<"Innodb_checkpoint_max_age">>,
      <<"Innodb_data_fsyncs">>,
      <<"Innodb_data_pending_fsyncs">>,
      <<"Innodb_data_pending_reads">>,
