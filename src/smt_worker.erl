@@ -35,7 +35,6 @@ init([PoolName, Params, Interval]) ->
     emysql:add_pool(PoolName, Params),
     erlang:send_after(Interval, self(), flush),
     emysql:prepare(smt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
-    emysql:prepare(smt_show_innodb_status, <<"SHOW /*!50000 ENGINE*/ INNODB STATUS">>),
     {ok, #state{interval=Interval, pool_name=PoolName}}.
 
 handle_call(_Request, _From, State) ->
@@ -64,9 +63,7 @@ code_change(_OldVsn, State, _Extra) ->
 flush_graphite(PoolName, MState) ->
     Timestamp = now_to_seconds(now()),
     GlobPacket = emysql:execute(PoolName, smt_show_global_status, []),
-    InnoPacket = emysql:execute(PoolName, smt_show_innodb_status, []),
-    RawMetrics = result_packet_to_proplist(GlobPacket)
-              ++ innodb_result_packet_to_proplist(InnoPacket),
+    RawMetrics = result_packet_to_proplist(GlobPacket),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
     Prefix = "smt." ++ atom_to_list(PoolName) ++ ".",
@@ -89,43 +86,6 @@ now_to_seconds({Mega,Seconds,_}) ->
 result_packet_to_proplist(#result_packet{rows=Rows}) ->
     merge(variables(), Rows).
 
-innodb_result_packet_to_proplist(#error_packet{msg=Msg}) ->
-    error_logger:error_msg("~p", [Msg]), 
-    [];
-innodb_result_packet_to_proplist(#result_packet{rows=Rows}) ->
-    Status = innodb_rows_to_status(Rows),
-    [{<<"Innodb_log_current">>, innodb_lsn(Status)},
-     {<<"Innodb_log_flushed">>, innodb_log_flushed(Status)},
-     {<<"Innodb_log_checkpoint">>, innodb_checkpoint(Status)}].
-
-innodb_rows_to_status([[_Type, _Name, Status]]) ->
-    Status.
-
-
-parse_offset(Status, Prefix) ->
-    Res = re:run(Status,
-            <<Prefix/binary, "\\s+(\\d+) (\\d+)">>,
-            [{capture, all_but_first, binary}]),
-    case Res of
-        {match, [Group, Offset]} ->
-            {Group, Offset};
-        nomatch ->
-            {match, [Offset]} = re:run(Status,
-                    <<Prefix/binary, "\\s+(\\d+)">>,
-                    [{capture, all_but_first, binary}]),
-            {0, Offset}
-    end.
-
-
-
-innodb_lsn(Status) ->
-    parse_offset(Status, <<"Log sequence number">>).
-
-innodb_log_flushed(Status) ->
-    parse_offset(Status, <<"Log flushed up to">>).
-
-innodb_checkpoint(Status) ->
-    parse_offset(Status, <<"Last checkpoint at">>).
 
 %% Convert a list of rows into a proplist.
 %% Filter unknown rows.
@@ -221,12 +181,6 @@ calculate_value(Name, RawValue, MState) ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_dblwr_writes">> ->
             events_per_second(Name, RawValue, MState);
-        <<"Innodb_log_current">> ->
-            format_lsn(Name, RawValue, MState);
-        <<"Innodb_log_flushed">> ->
-            format_lsn(Name, RawValue, MState);
-        <<"Innodb_log_checkpoint">> ->
-            format_lsn(Name, RawValue, MState);
         <<"Innodb_log_write_requests">> ->
             events_per_second(Name, RawValue, MState);
         <<"Innodb_log_writes">> ->
@@ -290,5 +244,3 @@ update_interval(MState) ->
 get_interval(MState) ->
     dict:fetch(interval, MState).
 
-format_lsn(Name, {_Group, Offset}, MState) ->
-    {[{Name, Offset}], MState}.
