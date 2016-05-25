@@ -92,7 +92,7 @@ start_worker(Pool, Addr, Params) ->
     supervisor:start_child(smt_sup, smt_worker(Pool, Addr, Params)).
 
 smt_worker(Pool, Addr, Params) ->
-    {{smt_worker, Pool},
+    {{smt_worker, Pool, Addr},
      {smt_worker, start_link, [Pool, Addr, Params, 10000]},
         permanent, 5000, worker, [smt_worker]}.
 
