@@ -47,12 +47,18 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr}=State) ->
-    {ok, ConnPid} = try_to_connect_to(Params, Addr),
-    timer:send_interval(Interval, self(), flush),
-    {noreply, State#state{conn_pid=ConnPid}};
-handle_info(flush, #state{server_name=Pool, mstate=MState, conn_pid=ConnPid}=State) ->
+    case try_to_connect_to(Params, Addr) of
+        {ok, ConnPid} ->
+            timer:send_interval(Interval, self(), flush),
+            {noreply, State#state{conn_pid=ConnPid}};
+        {error, Reason} ->
+            erlang:send_after(1000, self(), try_to_connect),
+            error_logger:info_msg("issue=retry_to_connect, expected_addr=~p, reason=~p", [Addr, Reason]),
+            {noreply, State#state{}}
+    end;
+handle_info(flush, #state{server_name=Pool, expected_addr=Addr, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
-    MState2 = flush_graphite(Pool, ConnPid, MState),
+    MState2 = flush_graphite(Pool, Addr, ConnPid, MState),
     {noreply, State#state{mstate=MState2}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -66,13 +72,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-flush_graphite(Pool, ConnPid, MState) ->
+flush_graphite(Pool, Addr, ConnPid, MState) ->
     Timestamp = now_to_seconds(now()),
     Res = mysql:query(ConnPid, <<"SHOW /*!50002 GLOBAL */ STATUS">>, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
-    Prefix = "smt." ++ atom_to_list(Pool) ++ ".",
+    Prefix = "smt." ++ atom_to_list(Pool) ++ "." ++ binary_to_list(Addr) ++ ".",
     Output = [graphite_metric(Prefix, Name, Value, Timestamp)
               || {Name, Value} <- Metrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
@@ -84,7 +90,6 @@ flush_graphite(Pool, ConnPid, MState) ->
     MState3.
 
 graphite_metric(Prefix, Name, Value, Timestamp) ->
-    io:format("~p = ~p~n", [Name, Value]),
     io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, Timestamp]).
 
 now_to_seconds({Mega,Seconds,_}) ->
@@ -272,4 +277,36 @@ receive_all_flushes() ->
 
 
 try_to_connect_to(Params, Addr) ->
-    {ok, ConnPid} = mysql:start_link(Params).
+    error_logger:info_msg("issue=mysql:start_link, module=smt_worker", []),
+    Res = mysql:start_link(Params),
+    try_to_connect_to2(Res, Addr).
+
+try_to_connect_to2({error, Reason}, _Addr) ->
+    {error, Reason};
+try_to_connect_to2({ok, ConnPid}, Addr) ->
+    case my_address(ConnPid) of
+        Addr ->
+            {ok, ConnPid};
+        OtherAddr ->
+            error_logger:info_msg("issue=try_to_connect_to:bad_addr, expected_addr=~p, conn_addr=~p",
+                                  [Addr, OtherAddr]),
+            shutdown_process(ConnPid),
+            {error, badaddr}
+    end.
+            
+
+shutdown_process(Pid) ->
+    MonRef = erlang:monitor(process, Pid),
+    erlang:unlink(Pid),
+    erlang:exit(Pid, shutdown),
+    receive
+        {'DOWN', MonRef, process, Pid, _} ->
+            ok
+    after 5000 ->
+        erlang:exit(Pid, kill)
+    end.
+
+my_address(ConnPid) ->
+    {ok, _ColumnNames, Rows} = mysql:query(ConnPid, <<"SHOW VARIABLES WHERE Variable_name = 'hostname' OR Variable_name = 'port'">>, []),
+    [[<<"hostname">>, Host], [<<"port">>, Port]] = lists:sort(Rows),
+    <<Host/binary, ":", Port/binary>>.

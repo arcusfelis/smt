@@ -46,6 +46,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(try_to_connect, #state{interval=Interval, params=Params}=State) ->
+    error_logger:info_msg("issue=mysql:start_link, module=smt_disco", []),
     {ok, ConnPid} = mysql:start_link(Params),
     timer:send_interval(Interval, self(), flush),
     {noreply, State#state{conn_pid=ConnPid}};
