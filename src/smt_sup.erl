@@ -26,6 +26,7 @@ init([]) ->
     {ok, { {one_for_one, 5, 10}, Specs} }.
 
 smt_worker(PoolName, Params) ->
-    {smt_worker, {smt_worker, start_link, [PoolName, Params, 10000]},
-        permanent, 5000, worker, [smt_worker]}.
+    {{smt_disco, PoolName},
+     {smt_disco, start_link, [PoolName, Params, 10000]},
+        permanent, 5000, worker, [smt_disco]}.
 

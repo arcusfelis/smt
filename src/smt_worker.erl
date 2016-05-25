@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/3]).
+-export([start_link/4]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -17,6 +17,7 @@
         server_name,
         interval,
         conn_pid,
+        expected_addr,
         params,
         mstate = dict:new()}).
 
@@ -27,16 +28,16 @@
 %%% API
 %%%===================================================================
 
-start_link(ServerName, Params, Interval) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [ServerName, Params, Interval], []).
+start_link(Pool, Addr, Params, Interval) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Pool, Addr, Params, Interval], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([ServerName, Params, Interval]) ->
+init([Pool, Addr, Params, Interval]) ->
     erlang:send_after(10, self(), try_to_connect),
-    {ok, #state{interval=Interval, server_name=ServerName, params=Params}}.
+    {ok, #state{interval=Interval, server_name=Pool, params=Params, expected_addr=Addr}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -45,13 +46,13 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(try_to_connect, #state{interval=Interval, params=Params}=State) ->
-    {ok, ConnPid} = mysql:start_link(Params),
+handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr}=State) ->
+    {ok, ConnPid} = try_to_connect_to(Params, Addr),
     timer:send_interval(Interval, self(), flush),
     {noreply, State#state{conn_pid=ConnPid}};
-handle_info(flush, #state{server_name=ServerName, mstate=MState, conn_pid=ConnPid}=State) ->
+handle_info(flush, #state{server_name=Pool, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
-    MState2 = flush_graphite(ServerName, ConnPid, MState),
+    MState2 = flush_graphite(Pool, ConnPid, MState),
     {noreply, State#state{mstate=MState2}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -65,13 +66,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-flush_graphite(ServerName, ConnPid, MState) ->
+flush_graphite(Pool, ConnPid, MState) ->
     Timestamp = now_to_seconds(now()),
     Res = mysql:query(ConnPid, <<"SHOW /*!50002 GLOBAL */ STATUS">>, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
-    Prefix = "smt." ++ atom_to_list(ServerName) ++ ".",
+    Prefix = "smt." ++ atom_to_list(Pool) ++ ".",
     Output = [graphite_metric(Prefix, Name, Value, Timestamp)
               || {Name, Value} <- Metrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
@@ -268,3 +269,7 @@ receive_all_flushes() ->
     after 0 ->
           ok
     end.
+
+
+try_to_connect_to(Params, Addr) ->
+    {ok, ConnPid} = mysql:start_link(Params).
