@@ -14,28 +14,29 @@
          code_change/3]).
 
 -record(state, {
-        pool_name,
+        server_name,
         interval,
+        conn_pid,
         mstate = dict:new()}).
 
--include_lib("emysql/include/emysql.hrl").
+-compile(export_all).
+
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-start_link(PoolName, Params, Interval) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [PoolName, Params, Interval], []).
+start_link(ServerName, Params, Interval) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [ServerName, Params, Interval], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([PoolName, Params, Interval]) ->
-    emysql:add_pool(PoolName, Params),
+init([ServerName, Params, Interval]) ->
+    {ok, ConnPid} = mysql:start_link(Params),
     erlang:send_after(Interval, self(), flush),
-    emysql:prepare(smt_show_global_status, <<"SHOW /*!50002 GLOBAL */ STATUS">>),
-    {ok, #state{interval=Interval, pool_name=PoolName}}.
+    {ok, #state{interval=Interval, server_name=ServerName, conn_pid=ConnPid}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -44,8 +45,8 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(flush, #state{interval=Interval, pool_name=PoolName, mstate=MState}=State) ->
-    MState2 = flush_graphite(PoolName, MState),
+handle_info(flush, #state{interval=Interval, server_name=ServerName, mstate=MState, conn_pid=ConnPid}=State) ->
+    MState2 = flush_graphite(ServerName, ConnPid, MState),
     erlang:send_after(Interval, self(), flush),
     {noreply, State#state{mstate=MState2}};
 handle_info(_Info, State) ->
@@ -60,13 +61,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-flush_graphite(PoolName, MState) ->
+flush_graphite(ServerName, ConnPid, MState) ->
     Timestamp = now_to_seconds(now()),
-    GlobPacket = emysql:execute(PoolName, smt_show_global_status, []),
-    RawMetrics = result_packet_to_proplist(GlobPacket),
+    Res = mysql:query(ConnPid, <<"SHOW /*!50002 GLOBAL */ STATUS">>, []),
+    RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
-    Prefix = "smt." ++ atom_to_list(PoolName) ++ ".",
+    Prefix = "smt." ++ atom_to_list(ServerName) ++ ".",
     Output = [graphite_metric(Prefix, Name, Value, Timestamp)
               || {Name, Value} <- Metrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
@@ -78,12 +79,13 @@ flush_graphite(PoolName, MState) ->
     MState3.
 
 graphite_metric(Prefix, Name, Value, Timestamp) ->
+    io:format("~p = ~p~n", [Name, Value]),
     io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, Timestamp]).
 
 now_to_seconds({Mega,Seconds,_}) ->
     1000000*Mega+Seconds.
 
-result_packet_to_proplist(#result_packet{rows=Rows}) ->
+result_packet_to_proplist({ok, ColumnNames, Rows}) ->
     merge(variables(), Rows).
 
 
@@ -225,9 +227,13 @@ calc_difference(Name, RawValue, MState) ->
             %% Skip negative diff
             {[], dict:store(Name, NewValue, MState)};
         {ok, OldValue} ->
-            {[{Name, print_float((NewValue - OldValue) / get_interval(MState))}],
+            Interval = get_interval(MState),
+            {[{Name, calc_difference2(Name, NewValue, OldValue, Interval)}],
              dict:store(Name, NewValue, MState)}
     end.
+
+calc_difference2(Name, NewValue, OldValue, Interval) ->
+    print_float((NewValue - OldValue) / Interval).
 
 print_int(Value) when is_integer(Value) ->
     list_to_binary(integer_to_list(Value)).
