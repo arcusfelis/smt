@@ -28,7 +28,7 @@
 %%%===================================================================
 
 start_link(Pool, Params, Interval) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Pool, Params, Interval], []).
+    gen_server:start_link(?MODULE, [Pool, Params, Interval], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -81,6 +81,8 @@ start_stop_workers(Pool, Servers, Params) ->
     ToStart = [Addr || Addr <- Servers, not lists:member(Addr, Started)],
     [stop_worker(Pool, Addr) || Addr <- ToStop],
     [start_worker(Pool, Addr, Params) || Addr <- ToStart],
+    error_logger:info_msg("issue=start_stop_workers, started=~1000p, fetched=~1000p, to_stop=~1000p, to_start=~1000p",
+                          [Started, Servers, ToStop, ToStart]),
     ok.
 
 stop_worker(Pool, Addr) ->

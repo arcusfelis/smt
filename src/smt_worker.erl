@@ -33,7 +33,7 @@ retry_policy() -> [1000, 1000, 1000, 1000, 1000, 1000, 5000, 5000, 5000, 60000].
 %%%===================================================================
 
 start_link(Pool, Addr, Params, Interval) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Pool, Addr, Params, Interval], []).
+    gen_server:start_link(?MODULE, [Pool, Addr, Params, Interval], []).
 
 %%%===================================================================
 %%% gen_server callbacks
