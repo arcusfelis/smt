@@ -20,7 +20,8 @@
         expected_addr,
         params,
         mstate = dict:new(),
-        retry_times}).
+        retry_times,
+        interval_ref}).
 
 -compile(export_all).
 
@@ -47,6 +48,14 @@ handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
+handle_cast({set_interval, NewInterval}, State=#state{interval_ref=undefined}) ->
+    error_logger:info_msg("issue=set_interval, new_interval=~p", [NewInterval]),
+    {noreply, State#state{interval=NewInterval}};
+handle_cast({set_interval, NewInterval}, State=#state{interval_ref=IntervalRef}) ->
+    error_logger:info_msg("issue=set_interval, new_interval=~p", [NewInterval]),
+    {ok, cancel} = timer:cancel(IntervalRef),
+    {ok, NewIntervalRef} = timer:send_interval(NewInterval, self(), flush),
+    {noreply, State#state{interval=NewInterval, interval_ref=NewIntervalRef}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -60,8 +69,8 @@ retry_interval(Retries) when is_integer(Retries) ->
 handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr, retry_times=Retries}=State) ->
     case try_to_connect_to(Params, Addr) of
         {ok, ConnPid} ->
-            timer:send_interval(Interval, self(), flush),
-            {noreply, State#state{conn_pid=ConnPid}};
+            {ok, IntervalRef} = timer:send_interval(Interval, self(), flush),
+            {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef}};
         {error, Reason} ->
             erlang:send_after(retry_interval(Retries), self(), try_to_connect),
             error_logger:info_msg("issue=retry_to_connect, expected_addr=~p, reason=~p", [Addr, Reason]),
@@ -98,7 +107,7 @@ flush_graphite(Pool, Addr, ConnPid, MState) ->
     gen_tcp:send(Socket, Output),
     gen_tcp:close(Socket),
     error_logger:info_msg("Flushed ~B metrics.", [length(Metrics)]),
-    MState3.
+    maybe_spawn_retaliation_finder(Prefix, Metrics, MState3).
 
 graphite_metric(Prefix, Name, Value, Timestamp) ->
     io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, Timestamp]).
@@ -321,3 +330,39 @@ my_address(ConnPid) ->
     {ok, _ColumnNames, Rows} = mysql:query(ConnPid, <<"SHOW VARIABLES WHERE Variable_name = 'hostname' OR Variable_name = 'port'">>, []),
     [[<<"hostname">>, Host], [<<"port">>, Port]] = lists:sort(Rows),
     <<Host/binary, ":", Port/binary>>.
+
+
+maybe_spawn_retaliation_finder(_Prefix, [], MState) ->
+    MState;
+maybe_spawn_retaliation_finder(Prefix, [{Name,_}|_], MState) ->
+    MetricName = erlang:iolist_to_binary(io_lib:format("~s~s", [Prefix, Name])),
+    case dict:find(retaliation_finder_spawned, MState) of
+        error ->
+            Worker = self(),
+            Pid = spawn(fun() -> find_retaliation(Worker, MetricName) end),
+            dict:store(retaliation_finder_spawned, Pid, MState);
+        {ok, _} ->
+            MState
+    end.
+
+find_retaliation(Worker, MetricName) ->
+    try
+        {ok, GraphiteAddr} = application:get_env(smt, graphite_url),
+        MetricName2 = http_uri:encode(binary_to_list(MetricName)),
+        httpc:request(GraphiteAddr ++ "/render/?from=-10minutes&target=" ++ MetricName2 ++ "&format=json")
+    of
+        {ok,{{_,200,_},_,<<"[]">>}} ->
+            error_logger:info_msg("issue=find_retaliation:not_found, metric_name=~p", [MetricName]),
+            timer:sleep(5000),
+            find_retaliation(Worker, MetricName);
+        {ok,{{_,200,_},_,Body2}} ->
+            [Data] = jsx:decode(list_to_binary(Body2)),
+            Datapoints = proplists:get_value(<<"datapoints">>, Data),
+            Timestamps = lists:usort([Timestamp || [_Value, Timestamp] <- Datapoints]),
+            [A,B|_] = Timestamps,
+            Interval = B - A, %% seconds
+            gen_server:cast(Worker, {set_interval, Interval*1000})
+    catch ErrorClass:ErrorReason ->
+        error_logger:error_msg("issue=find_retaliation:failed, reason=~p:~p", [ErrorClass, ErrorReason])
+    end.
+

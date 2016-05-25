@@ -7,6 +7,7 @@
                   kernel,
                   stdlib,
                   crypto,
+                  inets,
                   mysql
                  ]},
   {mod, { smt_app, []}},
@@ -14,6 +15,7 @@
    [
     {graphite_host, "127.0.0.1"},
     {graphite_port, 2003},
+    {graphite_url, "http://127.0.0.1"},
     {mysql_hosts,
      [
         {mysql1,
