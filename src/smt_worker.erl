@@ -93,13 +93,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 flush_graphite(Pool, Addr, ConnPid, MState) ->
-    Timestamp = now_to_seconds(now()),
+    Timestamp = now_to_milliseconds(now()),
     Res = mysql:query(ConnPid, <<"SHOW /*!50002 GLOBAL */ STATUS">>, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
     Prefix = "smt." ++ atom_to_list(Pool) ++ "." ++ binary_to_list(Addr) ++ ".",
-    Output = [graphite_metric(Prefix, Name, Value, Timestamp)
+    TimestampSeconds = Timestamp div 1000,
+    Output = [graphite_metric(Prefix, Name, Value, TimestampSeconds)
               || {Name, Value} <- Metrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
     {ok, GraphitePort} = application:get_env(smt, graphite_port),
@@ -109,11 +110,13 @@ flush_graphite(Pool, Addr, ConnPid, MState) ->
     error_logger:info_msg("Flushed ~B metrics.", [length(Metrics)]),
     maybe_spawn_retaliation_finder(Prefix, Metrics, MState3).
 
-graphite_metric(Prefix, Name, Value, Timestamp) ->
-    io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, Timestamp]).
+graphite_metric(Prefix, Name, Value, TimestampSeconds) ->
+    io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, TimestampSeconds]).
 
-now_to_seconds({Mega,Seconds,_}) ->
-    1000000*Mega+Seconds.
+now_to_milliseconds({Mega,Seconds,MicroSeconds}) ->
+    Milliseconds = MicroSeconds div 1000,
+    FullSeconds = 1000000*Mega+Seconds,
+    FullSeconds * 1000 + Milliseconds.
 
 result_packet_to_proplist({ok, _ColumnNames, Rows}) ->
     merge(variables(), Rows).
@@ -263,7 +266,7 @@ calc_difference(Name, RawValue, MState) ->
     end.
 
 calc_difference2(_Name, NewValue, OldValue, Interval) ->
-    print_float((NewValue - OldValue) / Interval).
+    print_float(((NewValue - OldValue) / Interval) * 1000).
 
 print_int(Value) when is_integer(Value) ->
     list_to_binary(integer_to_list(Value)).
@@ -275,18 +278,18 @@ bin_to_int(Value) when is_binary(Value) ->
     list_to_integer(binary_to_list(Value)).
 
 update_interval(MState) ->
-    NewQueryTime = now_to_seconds(now()),
+    NewQueryTime = now_to_milliseconds(now()),
     case dict:find(query_time, MState) of
         error ->
             dict:store(query_time, NewQueryTime, MState);
         {ok, OldQueryTime} ->
             dict:store(query_time, NewQueryTime,
-                dict:store(interval, NewQueryTime - OldQueryTime, MState))
+                dict:store(interval_ms, NewQueryTime - OldQueryTime, MState))
     end.
 
-%% Interval in seconds
+%% Interval in milliseconds
 get_interval(MState) ->
-    dict:fetch(interval, MState).
+    dict:fetch(interval_ms, MState).
 
 receive_all_flushes() ->
     receive
@@ -351,7 +354,7 @@ find_retaliation(Worker, MetricName) ->
         MetricName2 = http_uri:encode(binary_to_list(MetricName)),
         httpc:request(GraphiteAddr ++ "/render/?from=-10minutes&target=" ++ MetricName2 ++ "&format=json")
     of
-        {ok,{{_,200,_},_,<<"[]">>}} ->
+        {ok,{{_,200,_},_,"[]"}} ->
             error_logger:info_msg("issue=find_retaliation:not_found, metric_name=~p", [MetricName]),
             timer:sleep(5000),
             find_retaliation(Worker, MetricName);
