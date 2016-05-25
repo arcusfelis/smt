@@ -19,9 +19,13 @@
         conn_pid,
         expected_addr,
         params,
-        mstate = dict:new()}).
+        mstate = dict:new(),
+        retry_times}).
 
 -compile(export_all).
+
+
+retry_policy() -> [1000, 1000, 1000, 1000, 1000, 1000, 5000, 5000, 5000, 60000].
 
 
 %%%===================================================================
@@ -37,7 +41,7 @@ start_link(Pool, Addr, Params, Interval) ->
 
 init([Pool, Addr, Params, Interval]) ->
     erlang:send_after(10, self(), try_to_connect),
-    {ok, #state{interval=Interval, server_name=Pool, params=Params, expected_addr=Addr}}.
+    {ok, #state{interval=Interval, server_name=Pool, params=Params, expected_addr=Addr, retry_times=0}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -46,15 +50,22 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr}=State) ->
+retry_interval(Retries) when is_integer(Retries) ->
+    try
+        lists:nth(Retries+1, retry_policy())
+    catch _:_ ->
+          lists:last(retry_policy())
+    end.
+
+handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr, retry_times=Retries}=State) ->
     case try_to_connect_to(Params, Addr) of
         {ok, ConnPid} ->
             timer:send_interval(Interval, self(), flush),
             {noreply, State#state{conn_pid=ConnPid}};
         {error, Reason} ->
-            erlang:send_after(1000, self(), try_to_connect),
+            erlang:send_after(retry_interval(Retries), self(), try_to_connect),
             error_logger:info_msg("issue=retry_to_connect, expected_addr=~p, reason=~p", [Addr, Reason]),
-            {noreply, State#state{}}
+            {noreply, State#state{retry_times=Retries+1}}
     end;
 handle_info(flush, #state{server_name=Pool, expected_addr=Addr, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
