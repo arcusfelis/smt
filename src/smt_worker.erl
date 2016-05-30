@@ -187,7 +187,8 @@ variables() ->
      <<"Select_range">>,
      <<"Select_range_check">>,
      <<"Select_scan">>,
-     <<"Slow_queries">>].
+     <<"Slow_queries">>,
+     <<"Threads_connected">>].
 
 calculate_values([{Name, RawValue}|RawMetrics], Metrics, MState) ->
     {Metrics2, MState2} = calculate_value(Name, RawValue, MState),
