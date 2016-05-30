@@ -143,6 +143,7 @@ variables() ->
      <<"Aborted_connects">>,
      <<"Bytes_received">>,
      <<"Bytes_sent">>,
+     <<"Connections">>,
      <<"Innodb_buffer_pool_pages_data">>,
      <<"Innodb_buffer_pool_pages_dirty">>,
      <<"Innodb_buffer_pool_pages_flushed">>,
