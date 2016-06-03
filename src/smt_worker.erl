@@ -98,7 +98,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 flush_graphite(Pool, Addr, ConnPid, MState) ->
     Timestamp = now_to_milliseconds(now()),
-    Res = mysql:query(ConnPid, <<"SHOW /*!50002 GLOBAL */ STATUS">>, []),
+    Res = mysql:query(ConnPid, <<"SHOW GLOBAL STATUS">>, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
