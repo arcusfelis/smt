@@ -49,7 +49,11 @@ handle_info(try_to_connect, #state{interval=Interval, params=Params}=State) ->
     error_logger:info_msg("issue=mysql:start_link, module=smt_disco", []),
     {ok, ConnPid} = mysql:start_link(Params),
     timer:send_interval(Interval, self(), flush),
+    {ok, _} = timer:send_interval(1000, self(), keep_alive),
     {noreply, State#state{conn_pid=ConnPid}};
+handle_info(keep_alive, #state{conn_pid=ConnPid}=State) ->
+    mysql:query(ConnPid, <<"SELECT 1">>, []),
+    {noreply, State#state{}};
 handle_info(flush, #state{server_name=Pool, params=Params, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
     MState2 = discover(Pool, ConnPid, Params, MState),

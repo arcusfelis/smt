@@ -69,6 +69,7 @@ retry_interval(Retries) when is_integer(Retries) ->
 handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr, retry_times=Retries}=State) ->
     case try_to_connect_to(Params, Addr) of
         {ok, ConnPid} ->
+            {ok, _} = timer:send_interval(1000, self(), keep_alive),
             {ok, IntervalRef} = timer:send_interval(Interval, self(), flush),
             {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef}};
         {error, Reason} ->
@@ -76,6 +77,9 @@ handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_ad
             error_logger:info_msg("issue=retry_to_connect, expected_addr=~p, reason=~p", [Addr, Reason]),
             {noreply, State#state{retry_times=Retries+1}}
     end;
+handle_info(keep_alive, #state{conn_pid=ConnPid}=State) ->
+    mysql:query(ConnPid, <<"SELECT 1">>, []),
+    {noreply, State#state{}};
 handle_info(flush, #state{server_name=Pool, expected_addr=Addr, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
     MState2 = flush_graphite(Pool, Addr, ConnPid, MState),
