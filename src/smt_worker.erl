@@ -111,7 +111,8 @@ flush_graphite(Pool, Addr, ConnPid, MState) ->
     {ok, Socket} = gen_tcp:connect(GraphiteHost, GraphitePort, []),
     gen_tcp:send(Socket, Output),
     gen_tcp:close(Socket),
-    error_logger:info_msg("Flushed ~B metrics.", [length(Metrics)]),
+    error_logger:info_msg("issue=flushed_metrics, metrics_flushed=~p, graphite_prefix=~p, graphite_host=~p:~p",
+                          [length(Metrics), Prefix, GraphiteHost, GraphitePort]),
     maybe_spawn_retaliation_finder(Prefix, Metrics, MState3).
 
 graphite_metric(Prefix, Name, Value, TimestampSeconds) ->
