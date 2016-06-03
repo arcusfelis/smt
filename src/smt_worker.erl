@@ -98,7 +98,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 flush_graphite(Pool, Addr, ConnPid, MState) ->
     Timestamp = now_to_milliseconds(now()),
-    Res = mysql:query(ConnPid, <<"SHOW GLOBAL STATUS">>, []),
+    [VarsH|VarsT] = variables(),
+    Where = erlang:iolist_to_binary(["\"", VarsH, "\"", [[", \"", X, "\" "] || X <- VarsT]]), 
+    Res = mysql:query(ConnPid, <<"SHOW GLOBAL STATUS WHERE Variable_name IN (", Where/binary, ")">>, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
@@ -188,11 +190,14 @@ variables() ->
      <<"Innodb_rows_inserted">>,
      <<"Innodb_rows_read">>,
      <<"Innodb_rows_updated">>,
+     <<"Memory_used">>,
      <<"Queries">>,
      <<"Select_range">>,
      <<"Select_range_check">>,
      <<"Select_scan">>,
      <<"Slow_queries">>,
+     <<"Sort_range">>,
+     <<"Sort_rows">>,
      <<"Threads_connected">>].
 
 calculate_values([{Name, RawValue}|RawMetrics], Metrics, MState) ->
@@ -246,6 +251,10 @@ calculate_value(Name, RawValue, MState) ->
         <<"Select_", _/binary>> ->
             events_per_second(Name, RawValue, MState);
         <<"Slow_queries">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Sort_range">> ->
+            events_per_second(Name, RawValue, MState);
+        <<"Sort_rows">> ->
             events_per_second(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
