@@ -71,6 +71,7 @@ handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_ad
         {ok, ConnPid} ->
             {ok, _} = timer:send_interval(1000, self(), keep_alive),
             {ok, IntervalRef} = timer:send_interval(Interval, self(), flush),
+            mysql:prepare(ConnPid, show_status, show_status_query()),
             {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef}};
         {error, Reason} ->
             erlang:send_after(retry_interval(Retries), self(), try_to_connect),
@@ -98,9 +99,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 flush_graphite(Pool, Addr, ConnPid, MState) ->
     Timestamp = now_to_milliseconds(now()),
-    [VarsH|VarsT] = variables(),
-    Where = erlang:iolist_to_binary(["\"", VarsH, "\"", [[", \"", X, "\" "] || X <- VarsT]]), 
-    Res = mysql:query(ConnPid, <<"SHOW GLOBAL STATUS WHERE Variable_name IN (", Where/binary, ")">>, []),
+    Res = mysql:execute(ConnPid, show_status, []),
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
@@ -384,4 +383,10 @@ find_retaliation(Worker, MetricName) ->
     catch ErrorClass:ErrorReason ->
         error_logger:error_msg("issue=find_retaliation:failed, reason=~p:~p", [ErrorClass, ErrorReason])
     end.
+
+
+show_status_query() ->
+    [VarsH|VarsT] = variables(),
+    Where = erlang:iolist_to_binary(["\"", VarsH, "\"", [[", \"", X, "\" "] || X <- VarsT]]), 
+    <<"SHOW GLOBAL STATUS WHERE Variable_name IN (", Where/binary, ")">>.
 
