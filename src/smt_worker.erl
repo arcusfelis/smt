@@ -18,6 +18,7 @@
         interval,
         conn_pid,
         expected_addr,
+        real_addr,
         params,
         mstate = dict:new(),
         retry_times,
@@ -68,11 +69,11 @@ retry_interval(Retries) when is_integer(Retries) ->
 
 handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_addr=Addr, retry_times=Retries}=State) ->
     case try_to_connect_to(Params, Addr) of
-        {ok, ConnPid} ->
+        {ok, ConnPid, RealAddr} ->
             {ok, _} = timer:send_interval(1000, self(), keep_alive),
             {ok, IntervalRef} = timer:send_interval(Interval, self(), flush),
             mysql:prepare(ConnPid, show_status, show_status_query()),
-            {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef}};
+            {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef, real_addr=RealAddr}};
         {error, Reason} ->
             erlang:send_after(retry_interval(Retries), self(), try_to_connect),
             error_logger:info_msg("issue=retry_to_connect, expected_addr=~p, reason=~p", [Addr, Reason]),
@@ -81,7 +82,7 @@ handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_ad
 handle_info(keep_alive, #state{conn_pid=ConnPid}=State) ->
     mysql:query(ConnPid, <<"SELECT 1">>, []),
     {noreply, State#state{}};
-handle_info(flush, #state{server_name=Pool, expected_addr=Addr, mstate=MState, conn_pid=ConnPid}=State) ->
+handle_info(flush, #state{server_name=Pool, real_addr=Addr, mstate=MState, conn_pid=ConnPid}=State) ->
     receive_all_flushes(),
     MState2 = flush_graphite(Pool, Addr, ConnPid, MState),
     {noreply, State#state{mstate=MState2}};
@@ -103,21 +104,32 @@ flush_graphite(Pool, Addr, ConnPid, MState) ->
     RawMetrics = result_packet_to_proplist(Res),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
-    Prefix = "smt." ++ atom_to_list(Pool) ++ "." ++ binary_to_list(Addr) ++ ".",
+    Format = format(Pool, Addr),
     TimestampSeconds = Timestamp div 1000,
-    Output = [graphite_metric(Prefix, Name, Value, TimestampSeconds)
+    Output = [graphite_metric(graphite_metric_name(Format, Name), Value, TimestampSeconds)
               || {Name, Value} <- Metrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
     {ok, GraphitePort} = application:get_env(smt, graphite_port),
     {ok, Socket} = gen_tcp:connect(GraphiteHost, GraphitePort, []),
     gen_tcp:send(Socket, Output),
     gen_tcp:close(Socket),
-    error_logger:info_msg("issue=flushed_metrics, metrics_flushed=~p, graphite_prefix=~p, graphite_host=~p:~p",
-                          [length(Metrics), Prefix, GraphiteHost, GraphitePort]),
-    maybe_spawn_retaliation_finder(Prefix, Metrics, MState3).
+    error_logger:info_msg("issue=flushed_metrics, metrics_flushed=~p, graphite_format=~p, graphite_host=~p:~p",
+                          [length(Metrics), Format, GraphiteHost, GraphitePort]),
+    maybe_spawn_retaliation_finder(Format, Metrics, MState3).
 
-graphite_metric(Prefix, Name, Value, TimestampSeconds) ->
-    io_lib:format("~s~s ~s ~B~n", [Prefix, Name, Value, TimestampSeconds]).
+format(Pool, Addr) ->
+    {ok, Format} = application:get_env(smt, graphite_format),
+    format(Format, Pool, Addr).
+
+format(Format, Pool, Addr) ->
+   Format1 = re:replace(Format, "\\$POOL", atom_to_list(Pool), [global, {return, list}]),
+   re:replace(Format1, "\\$ADDR", binary_to_list(Addr), [global, {return, list}]).
+
+graphite_metric_name(Format, Name) ->
+   re:replace(Format, "\\$NAME", Name, [global, {return, list}]).
+
+graphite_metric(Name, Value, TimestampSeconds) ->
+    io_lib:format("~s ~s ~B~n", [Name, Value, TimestampSeconds]).
 
 now_to_milliseconds({Mega,Seconds,MicroSeconds}) ->
     Milliseconds = MicroSeconds div 1000,
@@ -321,10 +333,14 @@ try_to_connect_to(Params, Addr) ->
 
 try_to_connect_to2({error, Reason}, _Addr) ->
     {error, Reason};
+try_to_connect_to2({ok, ConnPid}, undefined) ->
+    %% Do not validate addr because expected_addr=undefined
+    Addr = my_address(ConnPid),
+    {ok, ConnPid, Addr};
 try_to_connect_to2({ok, ConnPid}, Addr) ->
     case my_address(ConnPid) of
         Addr ->
-            {ok, ConnPid};
+            {ok, ConnPid, Addr};
         OtherAddr ->
             error_logger:info_msg("issue=try_to_connect_to:bad_addr, expected_addr=~p, conn_addr=~p",
                                   [Addr, OtherAddr]),
@@ -350,10 +366,10 @@ my_address(ConnPid) ->
     <<Host/binary, ":", Port/binary>>.
 
 
-maybe_spawn_retaliation_finder(_Prefix, [], MState) ->
+maybe_spawn_retaliation_finder(_Format, [], MState) ->
     MState;
-maybe_spawn_retaliation_finder(Prefix, [{Name,_}|_], MState) ->
-    MetricName = erlang:iolist_to_binary(io_lib:format("~s~s", [Prefix, Name])),
+maybe_spawn_retaliation_finder(Format, [{Name,_}|_], MState) ->
+    MetricName = erlang:iolist_to_binary(graphite_metric_name(Format, Name)),
     case dict:find(retaliation_finder_spawned, MState) of
         error ->
             Worker = self(),

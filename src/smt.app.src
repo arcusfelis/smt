@@ -16,6 +16,12 @@
     {graphite_host, "127.0.0.1"},
     {graphite_port, 2003},
     {graphite_url, "http://127.0.0.1"},
+    {graphite_format, "mysql.$POOL.$NAME"},
+
+% For autodiscovery
+%   {graphite_format, "mysql.$POOL.$ADDR.$NAME"},
+
+    {mysql_disco_hosts, []},
     {mysql_hosts,
      [
         {mysql1,
