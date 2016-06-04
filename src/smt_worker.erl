@@ -227,6 +227,8 @@ calculate_value(Name, RawValue, MState) ->
             bytes_per_second(Name, RawValue, MState);
         <<"Bytes_sent">> ->
             bytes_per_second(Name, RawValue, MState);
+        <<"Connections">> ->
+            events_per_second(Name, RawValue, MState);
          <<"Innodb_buffer_pool_read", _/binary>> -> 
             events_per_second(Name, RawValue, MState);
          <<"Innodb_buffer_pool_write_requests">> ->
