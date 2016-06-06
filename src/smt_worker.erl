@@ -210,7 +210,17 @@ variables() ->
      <<"Slow_queries">>,
      <<"Sort_range">>,
      <<"Sort_rows">>,
-     <<"Threads_connected">>].
+     <<"Threads_connected">>,
+     <<"wsrep_flow_control_paused_ns">>,
+     <<"wsrep_flow_control_recv">>,
+     <<"wsrep_flow_control_sent">>,
+     <<"wsrep_received">>,
+     <<"wsrep_received_bytes">>,
+     <<"wsrep_repl_data_bytes">>,
+     <<"wsrep_repl_keys">>,
+     <<"wsrep_repl_keys_bytes">>,
+     <<"wsrep_replicated">>,
+     <<"wsrep_replicated_bytes">>].
 
 calculate_values([{Name, RawValue}|RawMetrics], Metrics, MState) ->
     {Metrics2, MState2} = calculate_value(Name, RawValue, MState),
@@ -272,6 +282,26 @@ calculate_value(Name, RawValue, MState) ->
             events_per_interval(Name, RawValue, MState);
         <<"Sort_rows">> ->
             events_per_interval(Name, RawValue, MState);
+        <<"wsrep_flow_control_paused_ns">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_flow_control_recv">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_flow_control_sent">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_received">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_received_bytes">> ->
+            bytes_per_interval(Name, RawValue, MState);
+        <<"wsrep_repl_data_bytes">> ->
+            bytes_per_interval(Name, RawValue, MState);
+        <<"wsrep_repl_keys">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_repl_keys_bytes">> ->
+            bytes_per_interval(Name, RawValue, MState);
+        <<"wsrep_replicated">> ->
+            events_per_interval(Name, RawValue, MState);
+        <<"wsrep_replicated_bytes">> ->
+            bytes_per_interval(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
     end.
