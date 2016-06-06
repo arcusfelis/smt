@@ -161,6 +161,7 @@ variables() ->
      <<"Aborted_connects">>,
      <<"Bytes_received">>,
      <<"Bytes_sent">>,
+     <<"Connection_errors_max_connections">>,
      <<"Connections">>,
      <<"Innodb_buffer_pool_pages_data">>,
      <<"Innodb_buffer_pool_pages_dirty">>,
@@ -227,6 +228,8 @@ calculate_value(Name, RawValue, MState) ->
             bytes_per_second(Name, RawValue, MState);
         <<"Bytes_sent">> ->
             bytes_per_second(Name, RawValue, MState);
+        <<"Connection_errors_max_connections">> ->
+            events_per_second(Name, RawValue, MState);
         <<"Connections">> ->
             events_per_second(Name, RawValue, MState);
          <<"Innodb_buffer_pool_read", _/binary>> -> 
