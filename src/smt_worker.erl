@@ -137,7 +137,7 @@ now_to_milliseconds({Mega,Seconds,MicroSeconds}) ->
     FullSeconds * 1000 + Milliseconds.
 
 result_packet_to_proplist({ok, _ColumnNames, Rows}) ->
-    merge(variables(), Rows).
+    merge(lists:usort(variables()), lists:sort(Rows)).
 
 
 %% Convert a list of rows into a proplist.
