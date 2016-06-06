@@ -221,65 +221,65 @@ calculate_values([], Metrics, MState) ->
 calculate_value(Name, RawValue, MState) ->
     case Name of
         <<"Aborted_clients">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Aborted_connects">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Bytes_received">> ->
-            bytes_per_second(Name, RawValue, MState);
+            bytes_per_interval(Name, RawValue, MState);
         <<"Bytes_sent">> ->
-            bytes_per_second(Name, RawValue, MState);
+            bytes_per_interval(Name, RawValue, MState);
         <<"Connection_errors_max_connections">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Connections">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
          <<"Innodb_buffer_pool_read", _/binary>> -> 
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
          <<"Innodb_buffer_pool_write_requests">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_buffer_pool_pages_flushed">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_data_fsyncs">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_data_read">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_data_reads">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_data_writes">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_data_written">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_dblwr_pages_written">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_dblwr_writes">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_log_write_requests">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_log_writes">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_os_log_", _/binary>> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_pages_", _/binary>> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Innodb_rows_", _/binary>> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Queries">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Select_", _/binary>> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Slow_queries">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Sort_range">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         <<"Sort_rows">> ->
-            events_per_second(Name, RawValue, MState);
+            events_per_interval(Name, RawValue, MState);
         _ ->
             {[{Name, RawValue}], MState}
     end.
 
-events_per_second(Name, RawValue, MState) ->
+events_per_interval(Name, RawValue, MState) ->
     calc_difference(Name, RawValue, MState).
 
-bytes_per_second(Name, RawValue, MState) ->
+bytes_per_interval(Name, RawValue, MState) ->
     calc_difference(Name, RawValue, MState).
 
 calc_difference(Name, RawValue, MState) ->
@@ -298,7 +298,13 @@ calc_difference(Name, RawValue, MState) ->
     end.
 
 calc_difference2(_Name, NewValue, OldValue, Interval) ->
-    print_float(((NewValue - OldValue) / Interval) * 1000).
+    IntervalType = application:get_env(smt, interval_type, minute),
+    calc_difference2(_Name, NewValue, OldValue, Interval, IntervalType).
+
+calc_difference2(_Name, NewValue, OldValue, Interval, second) ->
+    print_float(((NewValue - OldValue) / Interval) * 1000);
+calc_difference2(_Name, NewValue, OldValue, Interval, minute) ->
+    print_float(((NewValue - OldValue) / Interval) * 1000 * 60).
 
 print_int(Value) when is_integer(Value) ->
     list_to_binary(integer_to_list(Value)).
