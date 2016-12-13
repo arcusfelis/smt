@@ -73,6 +73,7 @@ handle_info(try_to_connect, #state{interval=Interval, params=Params, expected_ad
             {ok, _} = timer:send_interval(1000, self(), keep_alive),
             {ok, IntervalRef} = timer:send_interval(Interval, self(), flush),
             mysql:prepare(ConnPid, show_status, show_status_query()),
+            mysql:prepare(ConnPid, select_information_schema_query, select_information_schema_query()),
             {noreply, State#state{conn_pid=ConnPid, interval_ref=IntervalRef, real_addr=RealAddr}};
         {error, Reason} ->
             erlang:send_after(retry_interval(Retries), self(), try_to_connect),
@@ -101,13 +102,15 @@ code_change(_OldVsn, State, _Extra) ->
 flush_graphite(Pool, Addr, ConnPid, MState) ->
     Timestamp = now_to_milliseconds(now()),
     Res = mysql:execute(ConnPid, show_status, []),
+    TableRes = mysql:execute(ConnPid, select_information_schema_query, []),
     RawMetrics = result_packet_to_proplist(Res),
+    TableMetrics = table_result_packet_to_proplist(TableRes),
     MState2 = update_interval(MState),
     {Metrics, MState3} = calculate_values(RawMetrics, [], MState2),
     Format = format(Pool, Addr),
     TimestampSeconds = Timestamp div 1000,
     Output = [graphite_metric(graphite_metric_name(Format, Name), Value, TimestampSeconds)
-              || {Name, Value} <- Metrics],
+              || {Name, Value} <- Metrics ++ TableMetrics],
     {ok, GraphiteHost} = application:get_env(smt, graphite_host),
     {ok, GraphitePort} = application:get_env(smt, graphite_port),
     {ok, Socket} = gen_tcp:connect(GraphiteHost, GraphitePort, []),
@@ -138,6 +141,29 @@ now_to_milliseconds({Mega,Seconds,MicroSeconds}) ->
 
 result_packet_to_proplist({ok, _ColumnNames, Rows}) ->
     merge(lists:usort(variables()), lists:sort(Rows)).
+
+table_result_packet_to_proplist({ok, ColumnNames, Rows}) ->
+    lists:append([table_row_to_proplist(ColumnNames, Row) || Row <- Rows]).
+
+table_row_to_proplist([<<"TABLE_NAME">>|ColumnNames],
+                      [TABLE_NAME|Values]) ->
+    lists:append([table_value_to_proplist(TABLE_NAME, Column, Value)
+                  || {Column, Value} <- lists:zip(ColumnNames, Values)]).
+
+table_value_to_proplist(TABLE_NAME, Column, Value) ->
+    case Column of
+        <<"TABLE_ROWS">> ->
+            table_int_value_to_proplist(TABLE_NAME, Value, rows);
+        <<"AUTO_INCREMENT">> ->
+            table_int_value_to_proplist(TABLE_NAME, Value, auto_increment);
+        _ ->
+            []
+    end.
+table_int_value_to_proplist(TABLE_NAME, Value, Name) when is_integer(Value), Value > 0 ->
+    NameBin = list_to_binary(atom_to_list(Name)),
+    [{<<"table.", TABLE_NAME/binary, ".", NameBin/binary>>, print_int(Value)}];
+table_int_value_to_proplist(_TABLE_NAME, _Value, _Name) ->
+    [].
 
 
 %% Convert a list of rows into a proplist.
@@ -446,4 +472,7 @@ show_status_query() ->
     [VarsH|VarsT] = variables(),
     Where = erlang:iolist_to_binary(["\"", VarsH, "\"", [[", \"", X, "\" "] || X <- VarsT]]), 
     <<"SHOW GLOBAL STATUS WHERE Variable_name IN (", Where/binary, ")">>.
+
+select_information_schema_query() ->
+    <<"SELECT TABLE_NAME, TABLE_ROWS, AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES">>.
 
