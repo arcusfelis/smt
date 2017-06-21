@@ -404,7 +404,7 @@ mysql_start_link(Params) ->
     {HelperPid, _} = spawn_monitor(fun() ->
                   Res = mysql:start_link(Params),
                   erlang:link(Parent),
-                  Res ! {result, self(), Res},
+                  Parent ! {result, self(), Res},
                   receive no_match -> ok end
           end),
     receive
