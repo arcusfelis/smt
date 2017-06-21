@@ -395,8 +395,24 @@ receive_all_flushes() ->
 
 try_to_connect_to(Params, Addr) ->
     error_logger:info_msg("issue=mysql:start_link, module=smt_worker", []),
-    Res = mysql:start_link(Params),
+    Res = mysql_start_link(Params),
     try_to_connect_to2(Res, Addr).
+
+%% mysql:init crashes in gen_tcp:connect if server is not reachable
+mysql_start_link(Params) ->
+    Parent = self(),
+    {HelperPid, _} = spawn_monitor(fun() ->
+                  Res = mysql:start_link(Params),
+                  erlang:link(Parent),
+                  Res ! {result, self(), Res},
+                  receive no_match -> ok end
+          end),
+    receive
+        {'DOWN', _, process, HelperPid, Reason} ->
+            {error, Reason};
+        {result, HelperPid, Res} ->
+            Res
+    end.
 
 try_to_connect_to2({error, Reason}, _Addr) ->
     {error, Reason};
