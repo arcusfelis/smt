@@ -47,7 +47,7 @@ docker run \
   -e MYSQL_MYSQL1_USER=ejabberd \
   -e MYSQL_MYSQL1_DATABASE=ejabberd \
   -e MYSQL_MYSQL1_PASSWORD=ejabberd \
-  -it smt
+  -d --name example-smt arcusfelis/smt:v0.1
 
 # Open graphite
 xdg-open 127.0.0.1:8080
